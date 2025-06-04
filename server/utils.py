@@ -27,6 +27,8 @@ def generate_series(series_id, size):
         # Добавить данные в список серии. Порядок полей:
         # username, text, latitude, longitude, address,
         # nearest_metro, metro_distance, series_id, series_order
+        # metro_distance заполняем значением None, чтобы кортеж
+        # соответствовал требуемой длине
         series.append((username, text, lat, lon, None, None, None, series_id, i))
     return series
 
