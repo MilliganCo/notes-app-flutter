@@ -18,6 +18,7 @@ A Flutter application for managing notes. Users can log in, view and save notes 
    ```
 
    The repository already contains `google-services.json` for Firebase Android configuration.
+   The file is located in `android/app` so no additional setup is required.
 
 ## Running
 
