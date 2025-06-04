@@ -40,11 +40,12 @@ Future<void> _setupNotifications() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  await _setupNotifications();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  // TODO(reenable-firebase): uncomment for release
+  // await Firebase.initializeApp(
+  //   options: DefaultFirebaseOptions.currentPlatform,
+  // );
+  // await _setupNotifications();
+  // FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(NotesApp());
 }
 
@@ -111,7 +112,8 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final success = await api_service.login(usernameController.text, passwordController.text);
       if (success) {
-        await api_service.registerDevice(usernameController.text);
+        // TODO(reenable-firebase): uncomment for release
+        // await api_service.registerDevice(usernameController.text);
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => NotesScreen(username: usernameController.text)),
@@ -233,7 +235,8 @@ class _NotesScreenState extends State<NotesScreen> {
     fetchLocation();
     fetchNotes();
     timer = Timer.periodic(const Duration(seconds: 10), (_) => fetchNotes());
-    _setupFCM();
+    // TODO(reenable-firebase): uncomment for release
+    // _setupFCM();
   }
 
   Future<void> _setupFCM() async {

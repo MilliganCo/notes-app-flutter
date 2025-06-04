@@ -1,16 +1,30 @@
 # my_notes_app
 
-A new Flutter project.
+A Flutter application for managing notes. Users can log in, view and save notes tied to their location and receive push notifications through Firebase.
 
-## Getting Started
+## Setup
 
-This project is a starting point for a Flutter application.
+1. Install Flutter by following the [official guide](https://docs.flutter.dev/get-started/install).
+2. Open the project directory:
 
-A few resources to get you started if this is your first Flutter project:
+   ```bash
+   cd my_notes_app
+   ```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+3. Fetch the required packages:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+   ```bash
+   flutter pub get
+   ```
+
+   The repository already contains `google-services.json` for Firebase Android configuration.
+
+## Running
+
+Ensure that a device or emulator is available and execute:
+
+```bash
+flutter run
+```
+
+This command builds the app and launches it on the connected device.

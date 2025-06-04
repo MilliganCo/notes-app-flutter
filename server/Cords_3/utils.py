@@ -24,7 +24,8 @@ def generate_series(series_id, size):
         lat, lon = generate_random_coordinates()
         username = generate_random_name()
         text = f"Серия {series_id}, записка {i}/{size}"
-        series.append((username, text, lat, lon, None, None, None, series_id, i))
+        # Добавить данные в список серии
+        series.append((username, text, lat, lon, None, None, series_id, i))
     return series
 
 def generate_random_notes(count):

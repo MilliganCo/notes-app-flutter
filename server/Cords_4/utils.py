@@ -1,6 +1,8 @@
 import random
 from geocoding import find_nearest_place
 
+from geocoding import rate_limited_request, find_nearest_place
+
 def enrich_notes_with_geodata(notes):
     """
     Обогащает записки ближайшими адресами и станциями метро.
@@ -15,6 +17,8 @@ def enrich_notes_with_geodata(notes):
         enriched_notes.append((*note[:4], address, metro_name, metro_distance, note[6], note[7]))
     return enriched_notes
 
+
+
 def generate_series(series_id, size):
     """
     Генерация серии записок с указанным идентификатором серии и размером.
@@ -24,7 +28,8 @@ def generate_series(series_id, size):
         lat, lon = generate_random_coordinates()
         username = generate_random_name()
         text = f"Серия {series_id}, записка {i}/{size}"
-        series.append((username, text, lat, lon, None, None, None, series_id, i))
+        # Добавить данные в список серии
+        series.append((username, text, lat, lon, None, None, series_id, i))
     return series
 
 def generate_random_notes(count):
