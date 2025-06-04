@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import json
 import math
 import re
@@ -10,6 +13,14 @@ import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_cors import cross_origin
+import firebase_admin
+from firebase_admin import credentials, messaging
+import os
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import jwt
+from functools import wraps
+from datetime import datetime, timedelta
 
 
 def generate_unique_id():
@@ -18,6 +29,18 @@ def generate_unique_id():
 
 app = Flask(__name__)
 CORS(app)
+
+# Инициализация ограничителя скорости
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["100/minute"]
+)
+
+cred = credentials.Certificate(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
+firebase_admin.initialize_app(cred, {
+    "projectId": os.environ["FCM_PROJECT_ID"],
+})
 
 # Для запуска генерации записок через сервер:
 # 1. Откройте новый терминал, когда сервер уже работает.
@@ -247,6 +270,7 @@ def is_sqli_attempt(data):
 # Сохранение записки с поддержкой текстового запроса
 @app.route("/save", methods=['POST'])
 @cross_origin()
+@token_required
 def save_note():
     global mycursor
     try:
@@ -309,6 +333,7 @@ def save_note():
 # Отправка сообщений к записке
 @app.route("/message", methods=['POST'])
 @cross_origin()
+@token_required
 def send_message():
     try:
         data = request.json
@@ -351,7 +376,12 @@ def send_message():
         mydb.commit()
 
         # Отправка уведомления получателю
-        send_notification(receiver, f"Новое сообщение от {sender} по записке {note_id}")
+        # Проверяем, что отправитель и получатель разные перед отправкой уведомления
+        if sender != receiver:
+            # TODO: Get receiver user_id from username
+            # Placeholder: Assuming receiver is user_id for now based on playbook structure
+            receiver_user_id = receiver # Replace with actual user_id retrieval
+            send_notification(receiver_user_id, "Новое сообщение", f"У вас новое сообщение по записке {note_id}", data={"note_id": note_id})
 
         return jsonify({"message": "Message sent successfully"}), 200
     except Exception as e:
@@ -363,13 +393,41 @@ def send_message():
             mydb.close()
 
 
-# Функция отправки уведомлений ДОДЕЛАТЬ ТУДУ
-def send_notification(username, message):
-    """
-    Отправка уведомления пользователю. Пока это просто заглушка для логов.
-    """
-    # Здесь можно интегрировать логику для уведомлений: email, push-уведомления и т.д.
-    print(f"Уведомление для {username}: {message}")
+def send_notification(user_id: int, title: str, body: str, data: dict | None = None):
+    try:
+        mydb = mysql.connector.connect(
+            host=os.environ.get('DB_HOST'),
+            user=os.environ.get('DB_USER'),
+            password=os.environ.get('DB_PASS'),
+            database=os.environ.get('DB_NAME')
+        )
+        mycursor = mydb.cursor(dictionary=True)
+
+        mycursor.execute("SELECT device_token FROM user_devices WHERE user_id=%s", (user_id,))
+        rows = mycursor.fetchall()
+        tokens = [r["device_token"] for r in rows]
+
+        if not tokens:
+            print(f"No device tokens found for user {user_id}. Skipping notification.")
+            return False  # silently skip
+
+        message = messaging.MulticastMessage(
+            notification=messaging.Notification(title=title, body=body),
+            data={k: str(v) for k, v in (data or {}).items()},
+            tokens=tokens,
+        )
+        response = messaging.send_multicast(message)
+        print(f"FCM sent to {user_id} ➜ success={response.success_count} failure={response.failure_count}")
+        return response.success_count > 0
+
+    except Exception as e:
+        print(f"Error sending notification to user {user_id}: {e}")
+        return False
+    finally:
+        if 'mycursor' in locals() and mycursor:
+            mycursor.close()
+        if 'mydb' in locals() and mydb:
+            mydb.close()
 
 
 # Получение сообщений к записке
@@ -437,40 +495,45 @@ def get_messages():
             mydb.close()
 
 
-# Маршрут для обновления флага прочтения сообщений (Не используется, понадобится если в будущем:
-# Появятся сценарии, где обновление флага "прочитано" потребуется без запроса всех сообщений (например, через push-уведомления или другую систему).
+# Маршрут для обновления флага прочтения сообщений
+# Появится сценарии, где обновление флага "прочитано" потребуется без запроса всех сообщений (например, через push-уведомления или другую систему).
 # Мы захотим изолировать логику пометки сообщений как прочитанных в отдельной функции для повторного использования (в других маршрутах или фоновых задачах))
 
 @app.route("/message/read", methods=['POST'])
 @cross_origin()
+@token_required
 def mark_message_as_read():
     try:
         data = request.json
         message_id = data.get('message_id')
+        # TODO: Validate ownership of the message before marking as read
 
         if not message_id:
             return jsonify({"error": "message_id is required"}), 400
 
         mydb = mysql.connector.connect(
-            host="localhost",
-            user="db_admin",
-            password="admin456123",
-            database="notes"
+            host=os.environ.get('DB_HOST'),
+            user=os.environ.get('DB_USER'),
+            password=os.environ.get('DB_PASS'),
+            database=os.environ.get('DB_NAME')
         )
         mycursor = mydb.cursor()
 
-        # Обновление статуса сообщения
-        sql = "UPDATE messages SET is_read = 1 WHERE id = %s"
+        # Обновление статуса сообщения и добавление read_at
+        sql = "UPDATE messages SET is_read = 1, read_at = NOW() WHERE id = %s"
         mycursor.execute(sql, (message_id,))
+        updated_count = mycursor.rowcount
         mydb.commit()
 
-        return jsonify({"message": "Message marked as read"}), 200
+        # TODO: Consider adding logic to send a read receipt notification back to the sender
+
+        return jsonify({"updated": updated_count}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        if 'mycursor' in locals():
+        if 'mycursor' in locals() and mycursor:
             mycursor.close()
-        if 'mydb' in locals():
+        if 'mydb' in locals() and mydb:
             mydb.close()
 
 
@@ -558,6 +621,7 @@ def get_active_notes():
 
 @app.route("/delete_note", methods=['POST'])
 @cross_origin()
+@token_required
 def delete_note():
     try:
         # Получаем данные из запроса
@@ -594,6 +658,7 @@ def delete_note():
 # Удаление сохраненной записки
 @app.route("/delete_saved_note", methods=['POST'])
 @cross_origin()
+@token_required
 def delete_saved_note():
     try:
         # Получаем данные из запроса
@@ -635,31 +700,46 @@ def delete_saved_note():
 # Вставка данных в таблицу notes
 def insert_into_db(data):
     mydb = mysql.connector.connect(
-        host="localhost",
-        user="db_admin",
-        password="admin456123",
-        database="notes"
+        host=os.environ.get('DB_HOST'),
+        user=os.environ.get('DB_USER'),
+        password=os.environ.get('DB_PASS'),
+        database=os.environ.get('DB_NAME')
     )
     mycursor = mydb.cursor()
 
-    for record in data:
-        note_id, username, title, text, lat, lon, address, metro = record
-        if is_sqli_attempt(username) or is_sqli_attempt(title) or is_sqli_attempt(text):
-            return {"error": "SQL injection attempt detected", "data": record}
-        if not validate_coordinates(lat, lon):
-            return {"error": f"Invalid coordinates: lat={lat}, lon={lon}"}
-
+    try:
+        # Начинаем транзакцию
+        mydb.start_transaction()
+        
         sql = """
             INSERT INTO notes (id, username, title, text, latitude, longitude, address, nearest_metro)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        val = (note_id, username, title, text, lat, lon, address, metro)
-        mycursor.execute(sql, val)
-
-    mydb.commit()
-    mycursor.close()
-    mydb.close()
-    return {"message": "Data inserted successfully"}
+        
+        # Подготавливаем все значения для вставки
+        values = []
+        for record in data:
+            note_id, username, title, text, lat, lon, address, metro = record
+            if is_sqli_attempt(username) or is_sqli_attempt(title) or is_sqli_attempt(text):
+                raise ValueError(f"SQL injection attempt detected in record: {record}")
+            if not validate_coordinates(lat, lon):
+                raise ValueError(f"Invalid coordinates: lat={lat}, lon={lon}")
+            values.append((note_id, username, title, text, lat, lon, address, metro))
+        
+        # Выполняем массовую вставку
+        mycursor.executemany(sql, values)
+        
+        # Фиксируем транзакцию
+        mydb.commit()
+        return {"message": f"Successfully inserted {len(values)} records"}
+        
+    except Exception as e:
+        # В случае ошибки откатываем транзакцию
+        mydb.rollback()
+        return {"error": str(e)}
+    finally:
+        mycursor.close()
+        mydb.close()
 
 
 # Функция для получения адреса
@@ -887,6 +967,7 @@ def get_notes():
 # noinspection PyUnreachableCode
 @app.route("/upload", methods=['POST'])
 @cross_origin()
+@token_required
 def upload_notes():
     try:
         print(f"Request form: {request.form}")  # Вывод всего содержимого формы
@@ -1007,25 +1088,299 @@ def generate_notes(mode):
 
 # Запуск
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "simulate_users":
-            print("Запуск симуляции жизни пользователей...")
-            threading.Thread(target=simulate_user_activity_optimized).start()
-        elif sys.argv[1] in ["generateradius", "generaterandom"]:
-            generate_notes(sys.argv[1])
-        elif sys.argv[1] == "generate_users":
-            print("Генерация пользователей...")
-            generate_users(1000)  # Можно указать любое число пользователей
-        else:
-            print("Неизвестная команда.")
+    import argparse
+    parser = argparse.ArgumentParser(description='Run the NotesApp server or perform CLI tasks.')
+    subparsers = parser.add_subparsers(dest='command')
+
+    # simulate_users command
+    simulate_users_parser = subparsers.add_parser('simulate_users', help='Run user activity simulation')
+
+    # generate_users command
+    generate_users_parser = subparsers.add_parser('generate_users', help='Generate random users')
+    generate_users_parser.add_argument('--count', type=int, default=1000, help='Number of users to generate')
+
+    # generaterandom command
+    generaterandom_parser = subparsers.add_parser('generaterandom', help='Generate random notes in random locations in Russia')
+    generaterandom_parser.add_argument('--count', type=int, default=100, help='Number of notes to generate') # Added default count
+
+    # generateradius command
+    generateradius_parser = subparsers.add_parser('generateradius', help='Generate random notes within a specified radius')
+    generateradius_parser.add_argument("--center", nargs=2, type=float, required=True, help="Center coordinates (latitude longitude)")
+    generateradius_parser.add_argument("--radius", type=float, default=5.0, help="Radius in kilometers")
+    generateradius_parser.add_argument("--count",  type=int,   default=100, help="Number of notes to generate")
+
+    args = parser.parse_args()
+
+    if args.command == "simulate_users":
+        print("Запуск симуляции жизни пользователей...")
+        threading.Thread(target=simulate_user_activity_optimized).start()
+    elif args.command in ["generateradius", "generaterandom"]:
+        if args.command == "generateradius":
+            if not args.center or len(args.center) != 2:
+                print("Error: --center requires exactly two coordinates (latitude longitude)")
+                sys.exit(1)
+            center_lat, center_lon = args.center
+            generate_radius(center_lat, center_lon, args.radius, args.count)
+        else:  # generaterandom
+            num_notes = args.count
+            for _ in range(num_notes):
+                lat, lon = generate_random_coords_russia()
+                insert_note(lat, lon)
+            print(f"{num_notes} random notes successfully added!")
+    elif args.command == "generate_users":
+        print("Генерация пользователей...")
+        generate_users(args.count)
     else:
-        print("Сервер запущен. Используйте команды для дополнительных действий:")
-        print("  python3 GPGtest.py generate_users      # Сгенерировать пользователей")
-        print("  python3 GPGtest.py simulate_users      # Запустить симуляцию жизни")
-        print("  python3 GPGtest.py generateradius      # Сгенерировать записки в радиусе")
-        print("  python3 GPGtest.py generaterandom      # Сгенерировать случайные записки")
-        app.run(
-        host='0.0.0.0',
-        debug=True,
-        ssl_context=('/var/www/audioledyxxl.ru/geo/certs/cert.pem', '/var/www/audioledyxxl.ru/geo/certs/key.pem')
+        print("Неизвестная команда.")
+    app.run(
+    host='0.0.0.0',
+    debug=True,
+    ssl_context=('/var/www/audioledyxxl.ru/geo/certs/cert.pem', '/var/www/audioledyxxl.ru/geo/certs/key.pem')
+    )
+
+@app.route("/register_device", methods=['POST'])
+def register_device():
+    # TODO: Implement JWT authentication to get user_id
+    # user_id = g.user.id  # once JWT is in place
+    # Placeholder for now:
+    user_id = request.json.get('user_id') # For testing without JWT
+
+    token  = request.json.get("token")
+    platform = request.json.get("platform", "android")
+
+    if not user_id or not token or not platform:
+        return jsonify({"error": "user_id, token, and platform are required"}), 400
+
+    try:
+        mydb = mysql.connector.connect(
+            host=os.environ.get('DB_HOST'),
+            user=os.environ.get('DB_USER'),
+            password=os.environ.get('DB_PASS'),
+            database=os.environ.get('DB_NAME')
         )
+        mycursor = mydb.cursor()
+
+        sql = "REPLACE INTO user_devices (user_id, device_token, platform) VALUES (%s,%s,%s)"
+        mycursor.execute(sql, (user_id, token, platform))
+        mydb.commit()
+        return jsonify({"ok": True}), 200
+
+    except Exception as e:
+        print(f"Error registering device: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if 'mycursor' in locals() and mycursor:
+            mycursor.close()
+        if 'mydb' in locals() and mydb:
+            mydb.close()
+
+# Константа для системного пользователя
+SYSTEM_UID = 1  # Предполагаем, что ID 1 зарезервирован для системных операций
+
+def random_coord_within_radius(center_lat: float, center_lon: float, radius_km: float) -> tuple[float, float]:
+    """
+    Генерирует случайные координаты в пределах заданного радиуса от центральной точки.
+    
+    Args:
+        center_lat: Широта центральной точки
+        center_lon: Долгота центральной точки
+        radius_km: Радиус в километрах
+        
+    Returns:
+        tuple[float, float]: Случайные координаты (широта, долгота)
+    """
+    # Конвертируем радиус из километров в градусы (примерно)
+    radius_deg = radius_km / 111.32  # 111.32 км в одном градусе на экваторе
+    
+    # Генерируем случайное расстояние и угол
+    distance = random.uniform(0, radius_deg)
+    angle = random.uniform(0, 2 * math.pi)
+    
+    # Вычисляем смещение
+    lat_offset = distance * math.cos(angle)
+    lon_offset = distance * math.sin(angle)
+    
+    # Применяем смещение к центральным координатам
+    new_lat = center_lat + lat_offset
+    new_lon = center_lon + lon_offset
+    
+    return new_lat, new_lon
+
+def insert_note(lat: float, lon: float, user_id: int = SYSTEM_UID) -> None:
+    """
+    Вставляет новую записку в базу данных.
+    
+    Args:
+        lat: Широта
+        lon: Долгота
+        user_id: ID пользователя (по умолчанию SYSTEM_UID)
+    """
+    try:
+        mydb = mysql.connector.connect(
+            host=os.environ.get('DB_HOST'),
+            user=os.environ.get('DB_USER'),
+            password=os.environ.get('DB_PASS'),
+            database=os.environ.get('DB_NAME')
+        )
+        mycursor = mydb.cursor()
+        
+        # Получаем случайные данные для записки
+        username = random.choice(random_usernames)
+        title = random.choice(random_titles)
+        text = random.choice(random_texts)
+        address = get_address_from_coords(lat, lon)
+        metro = get_nearest_metro(lat, lon)
+        
+        # Вставляем записку
+        sql = """
+            INSERT INTO notes (username, title, text, latitude, longitude, address, nearest_metro)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        val = (username, title, text, lat, lon, address, metro)
+        mycursor.execute(sql, val)
+        mydb.commit()
+        
+    except Exception as e:
+        print(f"Error inserting note: {e}")
+        raise
+    finally:
+        if 'mycursor' in locals() and mycursor:
+            mycursor.close()
+        if 'mydb' in locals() and mydb:
+            mydb.close()
+
+def generate_radius(center_lat: float, center_lon: float, radius_km: float, count: int) -> None:
+    """
+    Генерирует указанное количество записок в пределах заданного радиуса.
+    
+    Args:
+        center_lat: Широта центральной точки
+        center_lon: Долгота центральной точки
+        radius_km: Радиус в километрах
+        count: Количество записок для генерации
+    """
+    print(f"Generating {count} notes within {radius_km}km radius of ({center_lat}, {center_lon})")
+    
+    for i in range(count):
+        try:
+            lat, lon = random_coord_within_radius(center_lat, center_lon, radius_km)
+            insert_note(lat, lon)
+            if (i + 1) % 10 == 0:  # Прогресс каждые 10 записок
+                print(f"Generated {i + 1} notes...")
+        except Exception as e:
+            print(f"Error generating note {i + 1}: {e}")
+            continue
+    
+    print(f"Successfully generated {count} notes!")
+
+# JWT конфигурация
+JWT_SECRET = os.environ.get('JWT_SECRET')
+JWT_ALGORITHM = 'HS256'
+JWT_EXPIRATION = timedelta(days=1)
+
+def generate_token(user_id: int) -> str:
+    """
+    Генерирует JWT токен для пользователя.
+    
+    Args:
+        user_id: ID пользователя
+        
+    Returns:
+        str: JWT токен
+    """
+    payload = {
+        'user_id': user_id,
+        'exp': datetime.utcnow() + JWT_EXPIRATION
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def token_required(f):
+    """
+    Декоратор для защиты маршрутов, требующих аутентификации.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        # Получаем токен из заголовка Authorization
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(" ")[1]
+            except IndexError:
+                return jsonify({'error': 'Invalid token format'}), 401
+        
+        if not token:
+            return jsonify({'error': 'Token is missing'}), 401
+        
+        try:
+            # Декодируем токен
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            g.user_id = payload['user_id']
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+        
+        return f(*args, **kwargs)
+    
+    return decorated
+
+# Эндпоинт для аутентификации
+@app.route("/login", methods=['POST'])
+@cross_origin()
+def login():
+    try:
+        data = request.json
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'error': 'Missing username or password'}), 400
+        
+        mydb = mysql.connector.connect(
+            host=os.environ.get('DB_HOST'),
+            user=os.environ.get('DB_USER'),
+            password=os.environ.get('DB_PASS'),
+            database=os.environ.get('DB_NAME')
+        )
+        mycursor = mydb.cursor(dictionary=True)
+        
+        # Проверяем учетные данные
+        mycursor.execute(
+            "SELECT id, password_hash FROM user_auth WHERE username = %s AND is_active = 1",
+            (username,)
+        )
+        user = mycursor.fetchone()
+        
+        if not user or not verify_password(password, user['password_hash']):
+            return jsonify({'error': 'Invalid username or password'}), 401
+        
+        # Генерируем токен
+        token = generate_token(user['id'])
+        
+        return jsonify({
+            'token': token,
+            'user_id': user['id']
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if 'mycursor' in locals() and mycursor:
+            mycursor.close()
+        if 'mydb' in locals() and mydb:
+            mydb.close()
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """
+    Проверяет соответствие пароля его хешу.
+    
+    Args:
+        password: Пароль в открытом виде
+        password_hash: Хеш пароля
+        
+    Returns:
+        bool: True если пароль верный, False в противном случае
+    """
+    return hashlib.sha256(password.encode()).hexdigest() == password_hash

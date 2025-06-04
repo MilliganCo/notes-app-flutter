@@ -1,0 +1,19 @@
+{
+    "version": "1.0",
+    "rules": {
+      "priority": [
+        "environment.mdc",
+        "globalIgnore.mdc"
+      ],
+      "ignoreGitIgnore": true
+    },
+    "editor": {
+      "allowedPatterns": [
+        ".env*"
+      ]
+    },
+    "security": {
+      "allowEnvEditing": true
+    }
+  }
+  

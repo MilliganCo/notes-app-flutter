@@ -13,40 +13,94 @@ void openAddNoteDialog(BuildContext context, Position? position, Function fetchN
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text('Добавить записку'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: titleController,
-            decoration: InputDecoration(labelText: 'Заголовок'),
-          ),
-          TextField(
-            controller: contentController,
-            decoration: InputDecoration(labelText: 'Текст'),
-          ),
-          if (isAdmin) ...[
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      title: Text(
+        'Добавить записку',
+        style: TextStyle(
+          color: Color(0xFFB5EAD7),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             TextField(
-              controller: authorController,
-              decoration: InputDecoration(labelText: 'Автор'),
+              controller: titleController,
+              decoration: InputDecoration(
+                labelText: 'Заголовок',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                filled: true,
+                fillColor: Colors.white,
+              ),
             ),
+            SizedBox(height: 16),
             TextField(
-              controller: addressController,
-              decoration: InputDecoration(labelText: 'Адрес'),
+              controller: contentController,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: 'Текст',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                filled: true,
+                fillColor: Colors.white,
+              ),
             ),
-            TextField(
-              controller: metroController,
-              decoration: InputDecoration(labelText: 'Метро'),
-            ),
+            if (isAdmin) ...[
+              SizedBox(height: 16),
+              TextField(
+                controller: authorController,
+                decoration: InputDecoration(
+                  labelText: 'Автор',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                ),
+              ),
+              SizedBox(height: 16),
+              TextField(
+                controller: addressController,
+                decoration: InputDecoration(
+                  labelText: 'Адрес',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                ),
+              ),
+              SizedBox(height: 16),
+              TextField(
+                controller: metroController,
+                decoration: InputDecoration(
+                  labelText: 'Метро',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('Отмена'),
+          child: Text(
+            'Отмена',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
         ),
-        TextButton(
+        ElevatedButton(
           onPressed: () {
             if (position == null) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -66,9 +120,13 @@ void openAddNoteDialog(BuildContext context, Position? position, Function fetchN
             fetchNotes();
             Navigator.pop(context);
           },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Color(0xFFE2F0CB),
+            foregroundColor: Colors.black87,
+          ),
           child: Text('Добавить локально'),
         ),
-        TextButton(
+        ElevatedButton(
           onPressed: () async {
             if (position == null) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -86,6 +144,10 @@ void openAddNoteDialog(BuildContext context, Position? position, Function fetchN
             if (request) fetchNotes();
             Navigator.pop(context);
           },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Color(0xFFB5EAD7),
+            foregroundColor: Colors.black87,
+          ),
           child: Text('Добавить глобально'),
         ),
       ],
@@ -101,32 +163,63 @@ void openSimulateDialog(BuildContext context, Function(String, String) onSimulat
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text('Сымитировать координаты'),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      title: Text(
+        'Сымитировать координаты',
+        style: TextStyle(
+          color: Color(0xFFB5EAD7),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           TextField(
             controller: latController,
             keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: 'Широта (latitude)'),
+            decoration: InputDecoration(
+              labelText: 'Широта (latitude)',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
           ),
+          SizedBox(height: 16),
           TextField(
             controller: lonController,
             keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: 'Долгота (longitude)'),
+            decoration: InputDecoration(
+              labelText: 'Долгота (longitude)',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
           ),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('Отмена'),
+          child: Text(
+            'Отмена',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
         ),
-        TextButton(
+        ElevatedButton(
           onPressed: () {
             onSimulate(latController.text, lonController.text);
             Navigator.pop(context);
           },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Color(0xFFB5EAD7),
+            foregroundColor: Colors.black87,
+          ),
           child: Text('Применить'),
         ),
       ],
@@ -142,18 +235,45 @@ void openReplyDialog(BuildContext context, String noteId, String receiver,
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text('Ответить на записку'),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      title: Text(
+        'Ответить на записку',
+        style: TextStyle(
+          color: Color(0xFFB5EAD7),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
       content: TextField(
         controller: messageController,
-        decoration: InputDecoration(labelText: 'Текст сообщения'),
+        maxLines: 3,
+        decoration: InputDecoration(
+          labelText: 'Текст сообщения',
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          filled: true,
+          fillColor: Colors.white,
+        ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text('Отмена')),
         TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(
+            'Отмена',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+        ),
+        ElevatedButton(
           onPressed: () {
             onReply(messageController.text);
             Navigator.pop(context);
           },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Color(0xFFB5EAD7),
+            foregroundColor: Colors.black87,
+          ),
           child: Text('Отправить'),
         ),
       ],

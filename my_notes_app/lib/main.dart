@@ -3,11 +3,48 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'note_card.dart';
 import 'dialogs.dart';
-import 'api_service.dart';
+import 'api_service.dart' as api_service;
 import 'utils/location_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'firebase_options.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'dart:convert';
 
-void main() {
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  print('Получено фоновое сообщение: ${message.messageId}');
+}
+
+Future<void> _setupNotifications() async {
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  final DarwinInitializationSettings initializationSettingsIOS =
+      DarwinInitializationSettings(
+    requestAlertPermission: true,
+    requestBadgePermission: true,
+    requestSoundPermission: true,
+  );
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    iOS: initializationSettingsIOS,
+  );
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  await _setupNotifications();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(NotesApp());
 }
 
@@ -19,7 +56,31 @@ class NotesApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Notes App',
-      theme: ThemeData(primarySwatch: Colors.blue),
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        colorScheme: ColorScheme.light(
+          primary: Color(0xFFB5EAD7),
+          secondary: Color(0xFFFFDAC1),
+          surface: Color(0xFFE2F0CB),
+          background: Color(0xFFF7F7F7),
+          error: Color(0xFFFFB7B2),
+        ),
+        scaffoldBackgroundColor: Color(0xFFF7F7F7),
+        appBarTheme: AppBarTheme(
+          backgroundColor: Color(0xFFB5EAD7),
+          foregroundColor: Colors.black87,
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Color(0xFFB5EAD7),
+            foregroundColor: Colors.black87,
+          ),
+        ),
+        floatingActionButtonTheme: FloatingActionButtonThemeData(
+          backgroundColor: Color(0xFFFFDAC1),
+          foregroundColor: Colors.black87,
+        ),
+      ),
       home: LoginScreen(),
     );
   }
@@ -34,48 +95,84 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController usernameController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  bool isLoading = false;
 
-  Future<void> saveUsername(String username) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('username', username);
-  }
+  Future<void> login() async {
+    if (usernameController.text.isEmpty || passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Пожалуйста, заполните все поля')),
+      );
+      return;
+    }
 
-  Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('username');
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-    );
+    setState(() => isLoading = true);
+
+    try {
+      final success = await api_service.login(usernameController.text, passwordController.text);
+      if (success) {
+        await api_service.registerDevice(usernameController.text);
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => NotesScreen(username: usernameController.text)),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Неверное имя пользователя или пароль')),
+        );
+      }
+    } finally {
+      setState(() => isLoading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Login'),
+        title: const Text('Вход'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             TextField(
               controller: usernameController,
-              decoration: const InputDecoration(labelText: 'Username'),
+              decoration: InputDecoration(
+                labelText: 'Имя пользователя',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                filled: true,
+                fillColor: Colors.white,
+              ),
             ),
             const SizedBox(height: 16.0),
-            ElevatedButton(
-              onPressed: () async {
-                final username = usernameController.text;
-                if (username.isNotEmpty) {
-                  await saveUsername(username);
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => NotesScreen(username: username)),
-                  );
-                }
-              },
-              child: const Text('Login'),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: 'Пароль',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 24.0),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: isLoading ? null : login,
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: isLoading
+                      ? CircularProgressIndicator()
+                      : Text('Войти'),
+                ),
+              ),
             ),
           ],
         ),
@@ -98,6 +195,36 @@ class _NotesScreenState extends State<NotesScreen> {
   Position? currentPosition;
   bool isAdmin = false;
 
+  List<Map<String, dynamic>> localNotes = [];
+
+  Future<void> loadLocalNotes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? notesString = prefs.getString('localNotes');
+    if (notesString != null) {
+      localNotes = List<Map<String, dynamic>>.from(json.decode(notesString));
+    }
+  }
+
+  Future<void> saveLocalNotes() async {
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setString('localNotes', json.encode(localNotes));
+  }
+
+  void addLocalNote(String username, String title, String content, double lat, double lon, String address, String metro) {
+    localNotes.add({
+      "note_id": DateTime.now().millisecondsSinceEpoch.toString(),
+      "username": username,
+      "header": title,
+      "content": content,
+      "latitude": lat,
+      "longitude": lon,
+      "address": address,
+      "metro": metro,
+      "isSaved": false,
+    });
+    saveLocalNotes();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +233,36 @@ class _NotesScreenState extends State<NotesScreen> {
     fetchLocation();
     fetchNotes();
     timer = Timer.periodic(const Duration(seconds: 10), (_) => fetchNotes());
+    _setupFCM();
+  }
+
+  Future<void> _setupFCM() async {
+    FirebaseMessaging messaging = FirebaseMessaging.instance;
+    NotificationSettings settings = await messaging.requestPermission();
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        RemoteNotification? notification = message.notification;
+        AndroidNotification? android = message.notification?.android;
+
+        if (notification != null && android != null) {
+          flutterLocalNotificationsPlugin.show(
+            notification.hashCode,
+            notification.title,
+            notification.body,
+            NotificationDetails(
+              android: AndroidNotificationDetails(
+                'high_importance_channel',
+                'High Importance Notifications',
+                channelDescription: 'This channel is used for important notifications.',
+                importance: Importance.max,
+                priority: Priority.high,
+                icon: android.smallIcon,
+              ),
+            ),
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -119,13 +276,17 @@ class _NotesScreenState extends State<NotesScreen> {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        print('Разрешение на геолокацию отклонено');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Разрешение на геолокацию отклонено')),
+        );
         return;
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      print('Разрешение на геолокацию навсегда отклонено. Перейдите в настройки.');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Разрешение на геолокацию навсегда отклонено. Перейдите в настройки.')),
+      );
       return;
     }
 
@@ -140,12 +301,7 @@ class _NotesScreenState extends State<NotesScreen> {
 
   Future<void> fetchNotes() async {
     if (currentPosition == null) return;
-    //final prefs = await SharedPreferences.getInstance();
-    //final username = prefs.getString('username') ?? 'default_user';
-    //final fetchedNotes = await getNotes(username, currentPosition!.latitude, currentPosition!.longitude);
-    // Используйте тестовые данные
-    //setState(() => notes = fetchedNotes);
-    final fetchedNotes = generateTestNotes()+localNotes;
+    final fetchedNotes = await api_service.getNotes(widget.username, currentPosition!.latitude, currentPosition!.longitude);
     final nearbyNotes = fetchedNotes.where((note) {
       final distance = Geolocator.distanceBetween(
         currentPosition!.latitude,
@@ -153,41 +309,24 @@ class _NotesScreenState extends State<NotesScreen> {
         note['latitude'],
         note['longitude'],
       );
-      return distance < 1000; // Фильтруем записки в радиусе 1 км
+      return distance < 1000;
     }).toList();
     setState(() => notes = nearbyNotes);
   }
 
-  Future<void> sendReply(String username, String noteId, String receiver, String message) async {
-    if (currentPosition == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    final username = prefs.getString('username') ?? 'default_user';
-    await sendReply(noteId, username, receiver, message);
-  }
-  
-  void simulateCoordinates(double lat, double lon) {
-    setState(() {
-      currentPosition = Position(
-        latitude: lat,
-        longitude: lon,
-        timestamp: DateTime.now(),
-        accuracy: 0.0,
-        altitude: 0.0,
-        altitudeAccuracy: 0.0,
-        heading: 0.0,
-        headingAccuracy: 0.0,
-        speed: 0.0,
-        speedAccuracy: 0.0,
-      );
-    });
-    fetchNotes();
+  Future<void> logout() async {
+    await api_service.clearToken();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Notes (${widget.username})'),
+        title: Text('Записки (${widget.username})'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -195,9 +334,7 @@ class _NotesScreenState extends State<NotesScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.edit_location),
-            onPressed: () => openSimulateDialog(context, (lat, lon) {
-              simulateCoordinates(double.parse(lat), double.parse(lon));
-            }),
+            onPressed: () { /* TODO: Implement location simulation or remove */ },
           ),
           IconButton(
             icon: const Icon(Icons.admin_panel_settings),
@@ -207,22 +344,44 @@ class _NotesScreenState extends State<NotesScreen> {
               });
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: logout,
+          ),
         ],
       ),
       body: notes.isEmpty
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Загрузка записок...'),
+                ],
+              ),
+            )
           : ListView.builder(
+              padding: EdgeInsets.all(8),
               itemCount: notes.length,
               itemBuilder: (context, index) {
                 final note = notes[index];
                 final isCurrentUser = note['username'] == widget.username;
 
-                return NoteCard(
-                  note: note,
-                  isCurrentUser: isCurrentUser,
-                  onSave: () => saveNote(widget.username, note['note_id']),
-                  onDelete: () => deleteNote(widget.username, note['note_id']),
-                  onReply: () => openReplyDialog(context, note['note_id'], note['username'], (message) => sendReply(note['note_id'], widget.username, note['username'], message)),
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                  child: NoteCard(
+                    note: note,
+                    isCurrentUser: isCurrentUser,
+                    onSave: () => api_service.saveNote(widget.username, note['note_id']),
+                    onDelete: () => api_service.deleteNote(widget.username, note['note_id']),
+                    onReply: () => openReplyDialog(
+                      context,
+                      note['note_id'],
+                      note['username'],
+                      (message) => api_service.sendReply(note['note_id'], widget.username, note['username'], message),
+                    ),
+                  ),
                 );
               },
             ),
