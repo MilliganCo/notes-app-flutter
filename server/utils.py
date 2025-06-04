@@ -24,11 +24,11 @@ def generate_series(series_id, size):
         lat, lon = generate_random_coordinates()
         username = generate_random_name()
         text = f"Серия {series_id}, записка {i}/{size}"
-        # Добавить данные в список серии. Порядок полей:
+        # Добавить данные в список серии. Кортеж содержит девять элементов:
         # username, text, latitude, longitude, address,
-        # nearest_metro, metro_distance, series_id, series_order
-        # metro_distance заполняем значением None, чтобы кортеж
-        # соответствовал требуемой длине
+        # nearest_metro, metro_distance, series_id, series_order.
+        # Для metro_distance подставляем None, чтобы структура
+        # соответствовала формату базы данных.
         series.append((username, text, lat, lon, None, None, None, series_id, i))
     return series
 
